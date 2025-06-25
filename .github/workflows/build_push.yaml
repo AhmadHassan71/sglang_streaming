@@ -44,3 +44,6 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/sglang_streaming:${{ github.sha }}
           cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/sglang_streaming:buildcache
           cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/sglang_streaming:buildcache,mode=max
+          build-args: |
+            CUDA_VERSION=12.8.1
+            BUILD_TYPE=all
