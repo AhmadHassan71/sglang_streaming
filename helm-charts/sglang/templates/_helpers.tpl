@@ -65,14 +65,10 @@ Create the name of the service account to use
 Common environment variables
 */}}
 {{- define "sglang.commonEnv" -}}
-{{- if .Values.global.huggingface.token }}
-- name: HF_TOKEN
-  value: {{ .Values.global.huggingface.token | quote }}
-{{- end }}
 - name: PYTORCH_FORCE_FLOAT32
   value: "1"
 - name: TORCHINDUCTOR_CACHE_DIR
-  value: "/root/inductor_root_cache"
+  value: "/torch_cache/inductor_root_cache"
 {{- end }}
 
 {{/*
@@ -83,29 +79,14 @@ Common volume mounts
 - name: shm
   mountPath: /dev/shm
 {{- end }}
-{{- if .Values.storage.huggingfaceCache.enabled }}
-- name: hf-cache
-  mountPath: /root/.cache/huggingface
-{{- end }}
-{{- if .Values.storage.torchCache.enabled }}
+- name: model
+  mountPath: /model
+  readOnly: true
 - name: torch-cache
-  mountPath: /root/inductor_root_cache
-{{- end }}
+  mountPath: /torch_cache/inductor_root_cache
 - name: localtime
   mountPath: /etc/localtime
   readOnly: true
-{{- if eq .Values.storage.model.type "hostPath" }}
-- name: model
-  mountPath: /model
-{{- end }}
-{{- if eq .Values.storage.model.type "pvc" }}
-- name: model
-  mountPath: /model
-{{- end }}
-{{- if .Values.rdma.enabled }}
-- name: ib
-  mountPath: {{ .Values.rdma.infinibandPath }}
-{{- end }}
 {{- end }}
 
 {{/*
@@ -118,38 +99,16 @@ Common volumes
     medium: Memory
     sizeLimit: {{ .Values.storage.shm.size }}
 {{- end }}
-{{- if .Values.storage.huggingfaceCache.enabled }}
-- name: hf-cache
-  hostPath:
-    path: {{ .Values.storage.huggingfaceCache.hostPath }}
-    type: DirectoryOrCreate
-{{- end }}
-{{- if .Values.storage.torchCache.enabled }}
+- name: model
+  persistentVolumeClaim:
+    claimName: {{ .Values.storage.model.pvcName }}
 - name: torch-cache
-  hostPath:
-    path: {{ .Values.storage.torchCache.hostPath }}
-    type: DirectoryOrCreate
-{{- end }}
+  persistentVolumeClaim:
+    claimName: {{ .Values.storage.torchCache.pvcName }}
 - name: localtime
   hostPath:
     path: /etc/localtime
     type: File
-{{- if eq .Values.storage.model.type "hostPath" }}
-- name: model
-  hostPath:
-    path: {{ .Values.storage.model.hostPath.path }}
-    type: {{ .Values.storage.model.hostPath.type }}
-{{- end }}
-{{- if eq .Values.storage.model.type "pvc" }}
-- name: model
-  persistentVolumeClaim:
-    claimName: {{ .Values.storage.model.pvc.name }}
-{{- end }}
-{{- if .Values.rdma.enabled }}
-- name: ib
-  hostPath:
-    path: {{ .Values.rdma.infinibandPath }}
-{{- end }}
 {{- end }}
 
 {{/*
@@ -160,28 +119,5 @@ Model path resolution
 {{- .Values.global.model.path }}
 {{- else }}
 /model
-{{- end }}
-{{- end }}
-
-{{/*
-Security context
-*/}}
-{{- define "sglang.securityContext" -}}
-{{- if .Values.security.privileged }}
-privileged: true
-{{- end }}
-{{- if .Values.security.securityContext }}
-{{- toYaml .Values.security.securityContext | nindent 0 }}
-{{- end }}
-{{- end }}
-
-{{/*
-DNS Policy based on host networking
-*/}}
-{{- define "sglang.dnsPolicy" -}}
-{{- if .Values.networking.hostNetwork }}
-ClusterFirstWithHostNet
-{{- else }}
-{{ .Values.networking.dnsPolicy }}
 {{- end }}
 {{- end }}

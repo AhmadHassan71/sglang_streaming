@@ -3,6 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "sglang.fullname" . }}
+  namespace: {{ .Values.namespace | default "default" }}
   labels:
     {{- include "sglang.labels" . | nindent 4 }}
 spec:
@@ -86,12 +87,7 @@ spec:
             - "{{ .Values.single.server.host }}"
             - "--port"
             - "{{ .Values.single.server.port }}"
-            {{- if .Values.single.server.enableMetrics }}
-            - "--enable-metrics"
-            {{- end }}
-            {{- if .Values.global.model.trustRemoteCode }}
-            - "--trust-remote-code"
-            {{- end }}
+            
           env:
             {{- include "sglang.commonEnv" . | nindent 12 }}
           resources:
@@ -113,8 +109,7 @@ spec:
             initialDelaySeconds: {{ .Values.single.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.single.readinessProbe.periodSeconds }}
           {{- end }}
-          securityContext:
-            {{- include "sglang.securityContext" . | nindent 12 }}
+          
       volumes:
         {{- include "sglang.commonVolumes" . | nindent 8 }}
 {{- end }}

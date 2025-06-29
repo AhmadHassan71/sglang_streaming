@@ -1,174 +1,114 @@
-# SGLang Kubernetes Deployment Guide
-
-This guide provides step-by-step instructions for deploying SGLang on Kubernetes using Helm charts.
-
-## Table of Contents
-
-1. [Prerequisites](#prerequisites)
-2. [Installation Steps](#installation-steps)
-3. [Deployment Scenarios](#deployment-scenarios)
-4. [Configuration Examples](#configuration-examples)
-5. [Testing and Validation](#testing-and-validation)
-6. [Troubleshooting](#troubleshooting)
-
+# SGLang TTS Deployment Guide
+It does take a bit of time for the service to be fully operational after deployment, especially when using GPU resources. Please allow sufficient time for the service to initialize and become ready. Just in case Kubernetes marks it to be failed, just change the liveness and readiness probes to a higher value in the Helm chart values file. Once it has been deployed, it will start faster on subsequent restarts. Then we can ammend the values file to lower the liveness and readiness probes.
 ## Prerequisites
 
-### 1. Kubernetes Cluster Setup
+The devops engineering team must ensure that the naming of the service is consistent across the deployment and infrastructure configurations. The service should be named `sglang-service` in all configurations.
 
-Ensure you have a Kubernetes cluster with:
+### Step 1: GPU Support Configuration
 
-* Kubernetes version 1.19+
-* At least 2 nodes with GPU support
-* NVIDIA GPU Operator installed
-* Sufficient resources (CPU, Memory, GPU)
+Please ensure that GPU support has been configured in your Kubernetes cluster. This includes having the NVIDIA device plugin installed and ensuring that your nodes have GPUs available.
 
-### 2. Required Tools
+### Step 2: Namespace Configuration
 
-```bash
-# Install Helm
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-
-# Verify Helm installation
-helm version
-
-# Install kubectl (if not already installed)
-# Follow instructions at https://kubernetes.io/docs/tasks/tools/
-```
-
-### 3. GPU Support Setup
+Create the `dh-avery-tts` namespace and ensure it is properly mapped with the tokenizer service namespace for inter-service communication.
 
 ```bash
-# Install NVIDIA GPU Operator
-helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
-helm repo update
-helm install --wait gpu-operator nvidia/gpu-operator \
-  --namespace gpu-operator \
-  --create-namespace
+kubectl create namespace dh-avery-tts
 ```
 
-### 4. LeaderWorkerSet (for LWS deployments)
+**Note**: The DevOps team must ensure proper network policies and service mesh configuration between the `sglang-service` service and the tokenizer service. They must have the same namespace.
+
+### Step 3: PVC Management (DevOps Responsibility)
+
+**The DevOps team is responsible for creating and managing the following PVCs:**
+
+#### Model PVC (Read-Only)
+
+- **PVC Name**: `sglang-model-pvc`
+- **Mount Path**: `/model`
+- **Access Mode**: Read-Only
+- **Content**: Model files from `gs://drivehealth-dev-tts-model/Avery_0.2_3_16/`
+- **Storage Class**: As per infrastructure requirements
+
+#### Torch Cache PVC (Read-Write)
+
+- **PVC Name**: `sglang-torch-cache-pvc`
+- **Mount Path**: `/torch_cache/inductor_root_cache`
+- **Access Mode**: Read-Write
+- **Purpose**: Caching torch inductor files for faster service startup
+- **Storage Class**: Fast SSD recommended
+
+**Note**: The DevOps team must configure the Google CSI driver for GCS bucket mapping and ensure proper PVC creation with appropriate storage classes and access modes.
+
+## Deployment Process
+
+### Step 4: Build and Push Docker Image
+
+Create a CI/CD pipeline with the following steps:
 
 ```bash
-# Install LeaderWorkerSet CRDs
-kubectl apply --server-side -f https://github.com/kubernetes-sigs/lws/releases/download/v0.6.0/manifests.yaml
+# Build the Docker image
+docker build --build-arg CUDA_VERSION=12.8.1 --build-arg BUILD_TYPE=all -t sglang:cuda128 -f docker/Dockerfile .
 
-# Verify installation
-kubectl get crd leaderworkersets.leaderworkerset.x-k8s.io
+# Push to your container registry
 ```
 
-## Installation Steps
+### Step 5: Configure Helm Values
 
-### 1. Clone the Repository
+Update the `values.yaml` file:
+
+- Set `global.image.repository` to your pushed image repository
+- Set `global.image.tag` to your image tag
+- Verify PVC names match those created by DevOps team
+- Configure node selectors and resource requirements as per infrastructure
+
+### Step 6: Deploy with Helm
+Deploy the SGLang TTS service using Helm.
+
+## Testing and Validation
+
+### Step 7: Service Validation
+
+**Note**: Port 30000 should only be exposed for testing purposes. In production, communication should be between the tokenizer service and sglang service only.
+
+Test the deployment:
 
 ```bash
-git clone https://github.com/FarazRashid/sglang_streaming.git
-cd sglang_streaming
+curl -X POST http://{server-ip}:30000/generate ^
+ -H "Content-Type: application/json" ^
+ -d "{\"text\": \"^<^|task_tts^|^>^<^|start_content^|^>The stars whisper softly above a sleeping city.^<^|end_content^|^>^<^|start_global_token^|^>\", \"sampling_params\": {\"temperature\": 0.8, \"top_k\": 40, \"top_p\": 0.9, \"max_new_tokens\": 512}, \"stream\": true}"
+
+ # This is a windows friendly command, for Linux/Mac use their respective ones.
 ```
 
-### 2. Verify Helm Chart
+Replace `{server-ip}` with the actual IP address of your server.
 
-```bash
-# Lint the Helm chart
-helm lint ./helm-charts/sglang
+Expected output:
+![output](image.png)
 
-# Render templates to verify syntax
-helm template test-sglang ./helm-charts/sglang --dry-run
-```
+## Scaling and Monitoring
 
-### 3. Choose Your Deployment Scenario
+### HPA Configuration
 
-Select one of the following deployment modes based on your requirements:
+The deployment includes Horizontal Pod Autoscaler (HPA) with:
 
-* **Single Node**: For testing or small workloads
-* **Distributed**: For large models requiring multiple GPUs across nodes
-* **LeaderWorkerSet**: For advanced distributed deployments with better scheduling
+- **Min Replicas**: 1
+- **Max Replicas**: 3
+- **CPU Target**: 70%
+- **Memory Target**: 80%
 
-## Deployment Scenarios
+### Infrastructure Notes
 
-### Scenario 1: Single Node Development *(Recommended for First-Time Setup)*
+- Node selection, tolerations, and affinity rules are managed by the infrastructure team
+- GPU resource allocation is configured according to DevOps and DriveHealth team requirements
+- Service mesh and network policies are maintained by the infrastructure team
+- Monitoring and alerting should be configured as per organizational standards
 
-Perfect for development and testing with smaller models.
+## Troubleshooting
 
-```bash
-# Create namespace
-kubectl create namespace sglang
+### Common Issues
 
-# Deploy with simple configuration
-helm install sglang ./helm-charts/sglang \
-  --namespace sglang \
-  -f ./helm-charts/sglang/examples/simple.yaml
-```
-
-**Important:** Before deploying, make sure to manually update the following fields in your `simple.yaml` (or any values YAML file you use):
-
-* `global.model.path`: Provide the correct Hugging Face model path or local model mount path
-* `global.image.repository`: Set your container image repo if it's not public or default
-
-**Model Path Guidance:**
-
-* The `--model-path` parameter **must** point to a folder location mounted via a PersistentVolumeClaim (PVC), not just a remote URL.
-* For private access to a Google Cloud Storage bucket, use:
-
-  ```
-  --model-path="gs://drivehealth-dev-tts-model/Avery_0.2_3_16/"
-  ```
-
-  Ensure your service account has appropriate access and the volume is mounted.
-* For public access (not recommended for secure setups), use:
-
-  ```
-  --model-path="https://storage.googleapis.com/drivehealth-dev-tts-model/Avery_0.2_3_16"
-  ```
-
-  But still ensure this is mounted into the pod via PVC before being referenced.
-
-**Key Features:**
-
-* Single pod deployment
-* Uses small models (e.g., DialoGPT-medium)
-* ClusterIP service for internal access
-* Minimal resource requirements
-
-### Scenario 2: Single Node Production
-
-For production workloads on a single powerful GPU node.
-
-```bash
-# Deploy with production settings
-helm install sglang-prod ./helm-charts/sglang \
-  --namespace sglang \
-  -f ./helm-charts/sglang/examples/single-node.yaml \
-  --set global.huggingface.token="YOUR_HF_TOKEN"
-```
-
-**Important:**
-Manually update the following fields in `single-node.yaml`:
-
-* `global.model.path`
-* `global.image.repository`
-
-**Model Path Note:** It must be a folder mounted through a PVC (e.g., via GCS Fuse or similar) accessible inside the pod container.
-
-**Key Features:**
-
-* LoadBalancer service for external access
-* Health checks and monitoring
-* Larger resource allocations
-* Production-ready configuration
-
-### Scenario 3: Distributed High-Performance
-
-... *(unchanged content)* ...
-
-## Best Practices
-
-1. **Resource Planning**: Always plan for 2x memory overhead for model loading
-2. **Node Affinity**: Use node selectors to ensure pods land on appropriate hardware
-3. **Health Checks**: Enable health checks for production deployments
-4. **Monitoring**: Set up comprehensive monitoring for GPU, memory, and network
-5. **Security**: Use least-privilege principles and avoid privileged mode when possible
-6. **Backup**: Regularly backup your model data and configurations
-7. **Manual Configuration Reminder**: Always double-check and manually set `global.model.path` and `global.image.repository` fields in your values YAML file.
-8. **PVC Mount Required**: The model path must point to a mounted folder using a PersistentVolumeClaim. Remote links (e.g., GCS, HTTP) should be used only as backing sources for mounted volumes, not as direct `--model-path` values.
-
-This guide should help you successfully deploy and manage SGLang on Kubernetes. For additional support, refer to the main README and official documentation.
+1. **PVC Mount Issues**: Verify with DevOps team that PVCs are properly created and accessible
+2. **GPU Allocation**: Ensure NVIDIA device plugin is running and GPU nodes are available
+3. **Network Connectivity**: Verify namespace-to-namespace communication is configured
+4. **Resource Limits**: Check if resource requests/limits align with available cluster resources
