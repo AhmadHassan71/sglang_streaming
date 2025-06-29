@@ -31,7 +31,6 @@ spec:
       runtimeClassName: {{ .Values.runtimeClass.name }}
       {{- end }}
       serviceAccountName: {{ include "sglang.serviceAccountName" . }}
-      dnsPolicy: {{ include "sglang.dnsPolicy" . }}
       {{- if .Values.networking.hostNetwork }}
       hostNetwork: true
       {{- end }}
@@ -58,11 +57,6 @@ spec:
             - name: http
               containerPort: {{ .Values.single.server.port }}
               protocol: TCP
-            {{- if .Values.single.server.enableMetrics }}
-            - name: metrics
-              containerPort: {{ .Values.single.server.metricsPort }}
-              protocol: TCP
-            {{- end }}
           command: ["python3", "-m", "sglang.launch_server"]
           args:
             - "--model-path"
